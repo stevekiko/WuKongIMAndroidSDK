@@ -46,6 +46,8 @@ public class ConnectionManager extends BaseManager {
 
     public void setTransportMode(int mode) {
         this.transportMode = mode;
+        // 切换模式时重置 WSS 连续失败计数，避免之前的失败记录影响新的连接
+        WKConnection.getInstance().resetWssFailures();
     }
 
     // 连接

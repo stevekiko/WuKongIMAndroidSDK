@@ -90,13 +90,14 @@ public class WKConnection {
     // 正在发送的消息
     private final ConcurrentHashMap<Integer, WKSendingMsg> sendingMsgHashMap = new ConcurrentHashMap<>();
     // 正在重连中
-    public boolean isReConnecting = false;
+    public volatile boolean isReConnecting = false;
     // 连接状态
     private int connectStatus;
     private long lastMsgTime = 0;
     private String ip;
     private int port;
     private String wssAddr; // WebSocket 地址
+    private volatile int resolvedTransportMode = WKTransportMode.TCP; // getConnAddress 解析后的实际模式
     volatile WKTransport transport;
     private long requestIPTime;
     private long connAckTime;
@@ -164,6 +165,9 @@ public class WKConnection {
 
     private final int maxReconnectAttempts = 5;
     private final long baseReconnectDelay = 500;
+    // WSS 连续失败计数，超过阈值自动回退 TCP
+    private int wssConsecutiveFailures = 0;
+    private static final int WSS_FALLBACK_THRESHOLD = 3;
 
     // 使用原子变量替代锁保护的状态
     private final AtomicBoolean isConnecting = new AtomicBoolean(false);
@@ -242,6 +246,14 @@ public class WKConnection {
         port = 0;
         wssAddr = null;
         WKLoggerUtils.getInstance().i(TAG, "重连计数已重置");
+    }
+
+    /**
+     * 重置 WSS 连续失败计数
+     * 在用户主动切换传输模式时调用，避免历史失败记录导致立即回退
+     */
+    public void resetWssFailures() {
+        wssConsecutiveFailures = 0;
     }
 
     public void forcedReconnection() {
@@ -426,9 +438,11 @@ public class WKConnection {
 
                     int mode = ConnectionManager.getInstance().getTransportMode();
                     if (mode == WKTransportMode.WSS) {
-                        // WSS 模式：检查 wssAddr
                         if (TextUtils.isEmpty(wssAddr)) {
                             WKLoggerUtils.getInstance().e(TAG, "WSS模式但无WSS地址，回退TCP");
+                            mode = WKTransportMode.TCP;
+                        } else if (wssConsecutiveFailures >= WSS_FALLBACK_THRESHOLD) {
+                            WKLoggerUtils.getInstance().e(TAG, "WSS连续失败" + wssConsecutiveFailures + "次，临时回退TCP");
                             mode = WKTransportMode.TCP;
                         }
                     }
@@ -442,6 +456,7 @@ public class WKConnection {
                     WKConnection.this.ip = ip;
                     WKConnection.this.port = port;
                     WKConnection.this.wssAddr = wssAddr;
+                    WKConnection.this.resolvedTransportMode = mode; // 保存解析后的模式，供 connSocket 使用
                     if (connectionIsNull()) {
                         connSocket();
                     }
@@ -461,7 +476,8 @@ public class WKConnection {
     }
 
     private void connSocket() {
-        int mode = ConnectionManager.getInstance().getTransportMode();
+        // 使用 getConnAddress 解析后的模式，避免用户在连接过程中切换模式导致不一致
+        int mode = resolvedTransportMode;
 
         // 检查地址有效性
         if (mode == WKTransportMode.WSS) {
@@ -514,6 +530,7 @@ public class WKConnection {
                             connectSuccess.set(true);
                             isReConnecting = false;
                             connCount = 0;
+                            wssConsecutiveFailures = 0; // 连接成功，重置 WSS 失败计数
                             connectLatch.countDown();
                         }
 
@@ -583,6 +600,10 @@ public class WKConnection {
 
                     if (!connected || !connectSuccess.get()) {
                         WKLoggerUtils.getInstance().e(TAG, "连接建立超时或失败，" + connDesc);
+                        if (connMode == WKTransportMode.WSS) {
+                            wssConsecutiveFailures++;
+                            WKLoggerUtils.getInstance().e(TAG, "WSS失败计数: " + wssConsecutiveFailures + "/" + WSS_FALLBACK_THRESHOLD);
+                        }
                         closeConnect();
                         if (!executor.isShutdown()) {
                             if (WKIMApplication.getInstance().isNetworkConnected()) {
@@ -600,6 +621,9 @@ public class WKConnection {
                     String desc = connMode == WKTransportMode.WSS ?
                             "WSS:" + connWssAddr : "TCP:" + connIp + ":" + connPort;
                     WKLoggerUtils.getInstance().e(TAG, "连接异常: " + e.getMessage() + " " + desc);
+                    if (connMode == WKTransportMode.WSS) {
+                        wssConsecutiveFailures++;
+                    }
                     if (!executor.isShutdown()) {
                         if (WKIMApplication.getInstance().isNetworkConnected()) {
                             forcedReconnection();
