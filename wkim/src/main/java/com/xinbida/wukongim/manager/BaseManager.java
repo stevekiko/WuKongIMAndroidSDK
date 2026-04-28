@@ -13,14 +13,21 @@ public class BaseManager {
         return Looper.getMainLooper().getThread() == Thread.currentThread();
     }
 
-    private Handler mainHandler;
+    // port from upstream 2585602: volatile + DCL，避免 Handler 重复创建和内存泄漏
+    private volatile Handler mainHandler;
 
-    synchronized void runOnMainThread(ICheckThreadBack iCheckThreadBack) {
+    void runOnMainThread(ICheckThreadBack iCheckThreadBack) {
         if (iCheckThreadBack == null) {
             return;
         }
         if (!isMainThread()) {
-            if (mainHandler == null) mainHandler = new Handler(Looper.getMainLooper());
+            if (mainHandler == null) {
+                synchronized (this) {
+                    if (mainHandler == null) {
+                        mainHandler = new Handler(Looper.getMainLooper());
+                    }
+                }
+            }
             mainHandler.post(iCheckThreadBack::onMainThread);
         } else iCheckThreadBack.onMainThread();
     }

@@ -44,7 +44,8 @@ public class WKDBHelper {
     // 数据库版本
     private final static int version = 1;
     private static String myDBName;
-    private static String uid;
+    // port from upstream 2585602: volatile 修复 DCL 失效
+    private static volatile String uid;
     
     /**
      * 数据库查询回调接口

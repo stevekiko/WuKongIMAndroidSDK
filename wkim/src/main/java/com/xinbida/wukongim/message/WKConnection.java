@@ -105,7 +105,8 @@ public class WKConnection {
     private final long connAckTimeoutTime = 10;
     public String socketSingleID;
     private String lastRequestId;
-    public volatile Handler reconnectionHandler = new Handler(Objects.requireNonNull(Looper.myLooper()));
+    // port from upstream 2585602: 改用 getMainLooper 避免后台线程加载类时 myLooper() 返回 null 抛 NPE
+    public volatile Handler reconnectionHandler = new Handler(Looper.getMainLooper());
     Runnable reconnectionRunnable = this::reconnection;
     private int connCount = 0;
     private HeartbeatManager heartbeatManager;
