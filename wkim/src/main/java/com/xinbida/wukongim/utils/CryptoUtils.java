@@ -146,6 +146,10 @@ public class CryptoUtils {
      * 将 字节数组 转换成 Base64 编码
      */
     public String base64Encode(byte[] data) {
+        // Bugly#31532: 上游 aesEncrypt 可能返回 null（key/payload 异常），
+        // Base64.encodeToString(null) 抛 NPE "Attempt to get length of null array"
+        // 发消息加密失败时返回空串，发送失败但 App 不挂
+        if (data == null) return "";
         return Base64.encodeToString(data, Base64.NO_WRAP);
     }
 
