@@ -11,6 +11,7 @@ import com.xinbida.wukongim.interfaces.IGetSocketIpAndPortListener;
 import com.xinbida.wukongim.message.MessageHandler;
 import com.xinbida.wukongim.message.WKConnection;
 import com.xinbida.wukongim.message.type.WKTransportMode;
+import com.xinbida.wukongim.utils.DateUtils;
 import com.xinbida.wukongim.utils.WKLoggerUtils;
 
 import java.util.Map;
@@ -61,6 +62,31 @@ public class ConnectionManager extends BaseManager {
         if (WKConnection.getInstance().connectionIsNull()) {
             WKConnection.getInstance().reconnection();
         }
+    }
+
+    /**
+     * 半开连接探测: transport 自报存活(connectionIsNull=false)但超过 thresholdSeconds
+     * 没收到任何入站帧时返回 true。供 App 层切前台时判断是否需要强制重连。
+     */
+    public boolean isConnectionStale(long thresholdSeconds) {
+        if (WKConnection.getInstance().connectionIsNull()) return false; // 真断开交给 connection()/startChat
+        long lastMsg = WKConnection.getInstance().getLastMsgTime();
+        if (lastMsg == 0) return false; // 尚未连接成功或正处于重连窗口
+        long idle = DateUtils.getInstance().getCurrentSeconds() - lastMsg;
+        return idle > thresholdSeconds;
+    }
+
+    /**
+     * 强制健康检查重连: 拆掉可能半开的旧 transport 并重新建连。
+     * App 层切前台疑似半开时调用。无凭证时静默返回, 不影响登录态。
+     */
+    public void forceHealthCheck() {
+        if (TextUtils.isEmpty(WKIMApplication.getInstance().getToken())
+                || TextUtils.isEmpty(WKIMApplication.getInstance().getUid())) {
+            return;
+        }
+        WKIMApplication.getInstance().isCanConnect = true;
+        WKConnection.getInstance().reconnection();
     }
 
 

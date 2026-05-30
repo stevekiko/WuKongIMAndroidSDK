@@ -93,7 +93,10 @@ public class WKConnection {
     public volatile boolean isReConnecting = false;
     // 连接状态
     private int connectStatus;
-    private long lastMsgTime = 0;
+    // 最近一次收到任意服务端入站帧的时间(秒)。用于半开连接(half-open)看门狗:
+    // NIO isOpen()/WSS connected 标志在 NAT 静默回收/进程冻结时会假报存活,
+    // 该时间戳是判断链路真实存活的唯一可靠依据。volatile: 后台线程写 / NetworkChecker 读。
+    private volatile long lastMsgTime = 0;
     private String ip;
     private int port;
     private String wssAddr; // WebSocket 地址
@@ -249,6 +252,11 @@ public class WKConnection {
         WKLoggerUtils.getInstance().i(TAG, "重连计数已重置");
     }
 
+    // half-open 看门狗用: 最近一次收到入站帧的时间(秒), 0 表示尚未连接/已重置。只读。
+    public long getLastMsgTime() {
+        return lastMsgTime;
+    }
+
     /**
      * 重置 WSS 连续失败计数
      * 在用户主动切换传输模式时调用，避免历史失败记录导致立即回退
@@ -315,6 +323,8 @@ public class WKConnection {
     }
 
     public void reconnection() {
+        // 进入重连即清零存活时间戳, 防止重连窗口内看门狗用陈旧时间重复触发
+        lastMsgTime = 0;
         // 如果正在关闭连接，延迟到后台线程重试（避免主线程阻塞）
         if (isClosing.get()) {
             WKLoggerUtils.getInstance().e(TAG, "等待连接关闭完成后再重连");
@@ -662,6 +672,8 @@ public class WKConnection {
     }
 
     void receivedData(byte[] data) {
+        // 收到任意入站帧即刷新存活时间戳(不止 pong), 作为 half-open 看门狗的真实存活依据
+        lastMsgTime = DateUtils.getInstance().getCurrentSeconds();
         MessageHandler.getInstance().cutBytes(data,
                 new IReceivedMsgListener() {
 
@@ -772,6 +784,8 @@ public class WKConnection {
             if (status == WKConnectStatus.success) {
                 connCount = 0;
                 isReConnecting = false;
+                // 连接成功重置存活时间戳, 避免看门狗用旧连接的陈旧时间立即误判
+                lastMsgTime = DateUtils.getInstance().getCurrentSeconds();
                 connectStatus = WKConnectStatus.syncMsg;
                 WKIM.getInstance().getConnectionManager().setConnectionStatus(WKConnectStatus.syncMsg, WKConnectReason.SyncMsg);
                 startAll();
