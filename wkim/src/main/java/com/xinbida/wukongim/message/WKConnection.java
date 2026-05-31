@@ -328,6 +328,11 @@ public class WKConnection {
             scheduleReconnectionOnBackground(0);
             return;
         }
+        reconnectionInternal();
+    }
+
+    // 真正的重连体, 只应在后台线程执行(主线程入口由 reconnection() 收口转发)。
+    private void reconnectionInternal() {
         // 如果正在关闭连接，延迟到后台线程重试（避免主线程阻塞）
         if (isClosing.get()) {
             WKLoggerUtils.getInstance().e(TAG, "等待连接关闭完成后再重连");
@@ -378,7 +383,7 @@ public class WKConnection {
                 executor.execute(() -> {
                     try {
                         Thread.sleep(delayMs);
-                        reconnection();
+                        reconnectionInternal();
                     } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();
                     }
