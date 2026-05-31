@@ -147,8 +147,10 @@ public class WKConnection {
             if (nowTime - connAckTime > connAckTimeoutTime && connectStatus != WKConnectStatus.success && connectStatus != WKConnectStatus.syncMsg) {
                 WKLoggerUtils.getInstance().e(TAG, "连接确认超时");
                 isReConnecting = false;
-                closeConnect();
-                reconnection();
+                // closeConnect()→tryLockWithTimeout(3s) 不能在主线程(此 Handler 是 mainLooper)跑。
+                // 转后台 executor 执行 reconnectionInternal(其 isHaveNetwork 分支会自行 closeConnect),
+                // 避免主线程 ANR。
+                scheduleReconnectionOnBackground(0);
             } else {
                 if (connectStatus == WKConnectStatus.success || connectStatus == WKConnectStatus.syncMsg) {
                     WKLoggerUtils.getInstance().e(TAG, "连接确认成功");
