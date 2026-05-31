@@ -438,7 +438,14 @@ public class WKConnection {
         WKLoggerUtils.getInstance().i(TAG, "[probe] 发 ping 探活, 等 pong " + timeoutMs + "ms");
         android.util.Log.i("WKProbe", "ping sent, await pong " + timeoutMs + "ms");
         reconnectionHandler.postDelayed(timeoutRunnable, timeoutMs);
-        sendMessage(new WKPingMsg());
+        // sendMessage 内部 tryLockWithTimeout(3s) 必须离主线程, 否则锁竞争时 onFront 主线程 ANR。
+        // 此前的状态(probePongCallback/probeTimeoutRunnable/postDelayed)已在主线程设好,
+        // executor.execute() happens-before 任务执行 + volatile 保证可见性, 无 race。
+        try {
+            getOrCreateExecutor().execute(() -> sendMessage(new WKPingMsg()));
+        } catch (RejectedExecutionException e) {
+            WKLoggerUtils.getInstance().e(TAG, "[probe] ping 提交失败(executor 已关闭): " + e.getMessage());
+        }
     }
 
     private void getConnAddress() {
