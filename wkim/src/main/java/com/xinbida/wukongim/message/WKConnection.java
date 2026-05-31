@@ -180,6 +180,11 @@ public class WKConnection {
     private final AtomicBoolean isConnecting = new AtomicBoolean(false);
     private final AtomicBoolean isReconnectScheduled = new AtomicBoolean(false);
 
+    // 专用: 主线程 reconnection() 转后台的去重标志, 防止多个主线程入口在 isReConnecting 置位前
+    // 重复投递后台重连任务。仅服务"主线程→后台"这一条路径, 不与 forcedReconnection 的
+    // isReconnectScheduled(退避调度)语义混用。后台任务执行完毕(finally)清除。
+    private final AtomicBoolean mainThreadReconnectScheduled = new AtomicBoolean(false);
+
     private final Object executorLock = new Object();
     private volatile ExecutorService connectionExecutor;
 
@@ -324,8 +329,12 @@ public class WKConnection {
         // 主线程收口: reconnection 内部 closeConnect()→tryLockWithTimeout(3s) 会阻塞调用线程。
         // 任何主线程调用方(onFront→startChat→connection、CMD reconnect 等)在此统一转后台,
         // 杜绝主线程 ANR。后台 executor 上重入 reconnection() 时 Looper 判断为 false, 正常执行。
+        // 轻量去重: isReConnecting 置位前有空窗, 多个主线程入口可能重复投递, 用专用 CAS 防重复。
         if (Looper.myLooper() == Looper.getMainLooper()) {
-            scheduleReconnectionOnBackground(0);
+            if (!mainThreadReconnectScheduled.compareAndSet(false, true)) {
+                return; // 已有一次主线程转后台在途, 跳过
+            }
+            scheduleMainThreadReconnect();
             return;
         }
         reconnectionInternal();
@@ -391,6 +400,27 @@ public class WKConnection {
             } catch (RejectedExecutionException e) {
                 WKLoggerUtils.getInstance().e(TAG, "延迟重连任务被拒绝: " + e.getMessage());
             }
+        }
+    }
+
+    // 主线程转后台的专用调度: 0 延迟执行 reconnectionInternal, finally 清主线程去重标志。
+    private void scheduleMainThreadReconnect() {
+        ExecutorService executor = getOrCreateExecutor();
+        if (executor != null && !executor.isShutdown()) {
+            try {
+                executor.execute(() -> {
+                    try {
+                        reconnectionInternal();
+                    } finally {
+                        mainThreadReconnectScheduled.set(false);
+                    }
+                });
+            } catch (RejectedExecutionException e) {
+                mainThreadReconnectScheduled.set(false); // 投递失败也要复位, 否则永久卡死后续主线程重连
+                WKLoggerUtils.getInstance().e(TAG, "主线程转后台重连任务被拒绝: " + e.getMessage());
+            }
+        } else {
+            mainThreadReconnectScheduled.set(false); // executor 不可用也复位
         }
     }
 
