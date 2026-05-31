@@ -396,6 +396,7 @@ public class WKConnection {
         // (避免 sendMessage(ping) 在非 success 态内部自行 reconnection() 造成双重连)
         if (connectionIsNullFast() || connectStatus != WKConnectStatus.success) {
             WKLoggerUtils.getInstance().i(TAG, "[probe] 连接不可用(空或非success), 直接后台重连");
+            android.util.Log.i("WKProbe", "unavailable(null or non-success), reconnect");
             scheduleReconnectionOnBackground(0);
             return;
         }
@@ -417,6 +418,7 @@ public class WKConnection {
                     probePongCallback = null; // 清钩子, 避免迟到 pong 误触发
                     probeTimeoutRunnable = null;
                     WKLoggerUtils.getInstance().e(TAG, "[probe] " + timeoutMs + "ms 内无 pong, 判定 half-open, 后台重连");
+                    android.util.Log.e("WKProbe", "no pong in " + timeoutMs + "ms -> half-open, reconnect");
                     scheduleReconnectionOnBackground(0);
                 }
             }
@@ -428,11 +430,13 @@ public class WKConnection {
                 reconnectionHandler.removeCallbacks(timeoutRunnable);
                 probeTimeoutRunnable = null;
                 WKLoggerUtils.getInstance().i(TAG, "[probe] 收到 pong, 连接存活");
+                android.util.Log.i("WKProbe", "pong received, alive");
             }
         };
 
         probeTimeoutRunnable = timeoutRunnable;
         WKLoggerUtils.getInstance().i(TAG, "[probe] 发 ping 探活, 等 pong " + timeoutMs + "ms");
+        android.util.Log.i("WKProbe", "ping sent, await pong " + timeoutMs + "ms");
         reconnectionHandler.postDelayed(timeoutRunnable, timeoutMs);
         sendMessage(new WKPingMsg());
     }
