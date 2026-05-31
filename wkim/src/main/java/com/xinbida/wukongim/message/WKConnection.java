@@ -321,6 +321,13 @@ public class WKConnection {
     }
 
     public void reconnection() {
+        // 主线程收口: reconnection 内部 closeConnect()→tryLockWithTimeout(3s) 会阻塞调用线程。
+        // 任何主线程调用方(onFront→startChat→connection、CMD reconnect 等)在此统一转后台,
+        // 杜绝主线程 ANR。后台 executor 上重入 reconnection() 时 Looper 判断为 false, 正常执行。
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            scheduleReconnectionOnBackground(0);
+            return;
+        }
         // 如果正在关闭连接，延迟到后台线程重试（避免主线程阻塞）
         if (isClosing.get()) {
             WKLoggerUtils.getInstance().e(TAG, "等待连接关闭完成后再重连");
