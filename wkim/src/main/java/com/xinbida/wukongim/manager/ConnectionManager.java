@@ -69,8 +69,7 @@ public class ConnectionManager extends BaseManager {
      * 没收到任何入站帧时返回 true。供 App 层切前台时判断是否需要强制重连。
      */
     public boolean isConnectionStale(long thresholdSeconds) {
-        // 用 Fast 版(无锁, 主线程安全) — 本方法在 onFront 主线程调用, 避免 tryLock 阻塞
-        if (WKConnection.getInstance().connectionIsNullFast()) return false; // 真断开交给 connection()/startChat
+        if (WKConnection.getInstance().connectionIsNull()) return false; // 真断开交给 connection()/startChat
         long lastMsg = WKConnection.getInstance().getLastMsgTime();
         if (lastMsg == 0) return false; // 尚未连接成功或正处于重连窗口
         long idle = DateUtils.getInstance().getCurrentSeconds() - lastMsg;
@@ -87,7 +86,7 @@ public class ConnectionManager extends BaseManager {
             return;
         }
         WKIMApplication.getInstance().isCanConnect = true;
-        WKConnection.getInstance().reconnectInBackground(); // 后台线程重连, 不阻塞主线程(防 ANR)
+        WKConnection.getInstance().reconnection();
     }
 
 

@@ -386,12 +386,6 @@ public class WKConnection {
         }
     }
 
-    // 在后台线程立即触发重连(供 App 层切前台半开探活调用)。
-    // 避免直接在主线程调 reconnection()→closeConnect()→tryLockWithTimeout(3s) 阻塞 UI 引发 ANR。
-    public void reconnectInBackground() {
-        scheduleReconnectionOnBackground(0);
-    }
-
     private void getConnAddress() {
         ExecutorService executor = getOrCreateExecutor();
         if (executor.isShutdown()) {
