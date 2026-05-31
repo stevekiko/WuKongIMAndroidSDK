@@ -94,6 +94,9 @@ public class WKConnection {
     // 连接状态
     private int connectStatus;
     private long lastMsgTime = 0;
+    // 回前台探活: 一次性 pong 回调。probeConnection 发 ping 前设置, pong 到达时触发并自清空。
+    // volatile: 探活在主线程设置, pong 在 transport 线程读取/清空。
+    private volatile Runnable probePongCallback = null;
     private String ip;
     private int port;
     private String wssAddr; // WebSocket 地址
@@ -691,6 +694,12 @@ public class WKConnection {
                     public void pongMsg(WKPongMsg msgHeartbeat) {
                         // 心跳消息
                         lastMsgTime = DateUtils.getInstance().getCurrentSeconds();
+                        // 回前台探活: 若有等待中的探活回调, 收到 pong 即触发并清空(一次性)
+                        Runnable cb = probePongCallback;
+                        if (cb != null) {
+                            probePongCallback = null;
+                            cb.run();
+                        }
                     }
 
                     @Override
