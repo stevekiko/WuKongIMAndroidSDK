@@ -33,6 +33,7 @@ import com.xinbida.wukongim.protocol.WKBaseMsg;
 import com.xinbida.wukongim.protocol.WKConnectAckMsg;
 import com.xinbida.wukongim.protocol.WKConnectMsg;
 import com.xinbida.wukongim.protocol.WKDisconnectMsg;
+import com.xinbida.wukongim.protocol.WKPingMsg;
 import com.xinbida.wukongim.protocol.WKPongMsg;
 import com.xinbida.wukongim.protocol.WKSendAckMsg;
 import com.xinbida.wukongim.protocol.WKSendMsg;
@@ -377,6 +378,47 @@ public class WKConnection {
                 WKLoggerUtils.getInstance().e(TAG, "延迟重连任务被拒绝: " + e.getMessage());
             }
         }
+    }
+
+    /**
+     * 回前台主动探活: 发一个 ping, 限时等 pong。
+     * - 连接对象已空 → 直接后台重连
+     * - timeoutMs 内收到 pong → 连接存活, 不动
+     * - timeoutMs 超时未收到 → 判定 half-open, 后台重连
+     * 仅回前台触发一次, 非常驻轮询。pong 与超时并发用 AtomicBoolean 保证只处理一次。
+     *
+     * @param timeoutMs 等 pong 超时(毫秒), 建议 3000
+     */
+    public void probeConnection(long timeoutMs) {
+        // 连接对象都没了, 无需探活, 直接重连
+        if (connectionIsNullFast()) {
+            WKLoggerUtils.getInstance().i(TAG, "[probe] 连接为空, 直接后台重连");
+            scheduleReconnectionOnBackground(0);
+            return;
+        }
+
+        final AtomicBoolean resolved = new AtomicBoolean(false);
+
+        // 超时任务: 到点还没收到 pong → 判定 half-open
+        final Runnable timeoutRunnable = () -> {
+            if (resolved.compareAndSet(false, true)) {
+                probePongCallback = null; // 清钩子, 避免迟到 pong 误触发
+                WKLoggerUtils.getInstance().e(TAG, "[probe] " + timeoutMs + "ms 内无 pong, 判定 half-open, 后台重连");
+                scheduleReconnectionOnBackground(0);
+            }
+        };
+
+        // pong 回调: 限时内收到 → 连接存活
+        probePongCallback = () -> {
+            if (resolved.compareAndSet(false, true)) {
+                reconnectionHandler.removeCallbacks(timeoutRunnable);
+                WKLoggerUtils.getInstance().i(TAG, "[probe] 收到 pong, 连接存活");
+            }
+        };
+
+        WKLoggerUtils.getInstance().i(TAG, "[probe] 发 ping 探活, 等 pong " + timeoutMs + "ms");
+        reconnectionHandler.postDelayed(timeoutRunnable, timeoutMs);
+        sendMessage(new WKPingMsg());
     }
 
     private void getConnAddress() {
