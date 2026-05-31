@@ -63,6 +63,20 @@ public class ConnectionManager extends BaseManager {
         }
     }
 
+    /**
+     * 回前台调用: 主动探活当前长连接, 死则后台重连。
+     * 无凭证时静默返回(未登录无需探活)。
+     *
+     * @param timeoutMs 等 pong 超时(毫秒), 建议 3000
+     */
+    public void probeAndReconnectIfDead(long timeoutMs) {
+        if (TextUtils.isEmpty(WKIMApplication.getInstance().getToken())
+                || TextUtils.isEmpty(WKIMApplication.getInstance().getUid())) {
+            return;
+        }
+        WKConnection.getInstance().probeConnection(timeoutMs);
+    }
+
 
     public void disconnect(boolean isLogout) {
         if (TextUtils.isEmpty(WKIMApplication.getInstance().getToken())) return;
