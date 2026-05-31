@@ -58,7 +58,11 @@ public class ConnectionManager extends BaseManager {
             return;
         }
         WKIMApplication.getInstance().isCanConnect = true;
-        if (WKConnection.getInstance().connectionIsNull()) {
+        // 用无锁 Fast 版: connection() 会从 onFront 主线程调用, connectionIsNull() 的
+        // tryLockWithTimeout(3s) 在锁竞争时会卡主线程 ANR。Fast 版读 volatile transport 不阻塞。
+        // 竞态(重连中 transport 被置 null 瞬间误判)由 reconnection 的 isReConnecting +
+        // connSocket 的 isConnecting CAS 守卫吸收, 最多多一次幂等 reconnection, 不会漏连/双连。
+        if (WKConnection.getInstance().connectionIsNullFast()) {
             WKConnection.getInstance().reconnection();
         }
     }
