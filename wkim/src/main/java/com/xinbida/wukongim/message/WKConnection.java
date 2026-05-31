@@ -98,6 +98,8 @@ public class WKConnection {
     // 回前台探活: 一次性 pong 回调。probeConnection 发 ping 前设置, pong 到达时触发并自清空。
     // volatile: 探活在主线程设置, pong 在 transport 线程读取/清空。
     private volatile Runnable probePongCallback = null;
+    // 当前在途探活的超时任务, 新探活开始时取消旧的, 避免快速切前后台时旧 timeout 误触发重连。
+    private volatile Runnable probeTimeoutRunnable = null;
     private String ip;
     private int port;
     private String wssAddr; // WebSocket 地址
@@ -390,21 +392,33 @@ public class WKConnection {
      * @param timeoutMs 等 pong 超时(毫秒), 建议 3000
      */
     public void probeConnection(long timeoutMs) {
-        // 连接对象都没了, 无需探活, 直接重连
-        if (connectionIsNullFast()) {
-            WKLoggerUtils.getInstance().i(TAG, "[probe] 连接为空, 直接后台重连");
+        // 连接对象都没了, 或不在 success 态(降级/握手中) → 无需探活, 直接后台重连。
+        // (避免 sendMessage(ping) 在非 success 态内部自行 reconnection() 造成双重连)
+        if (connectionIsNullFast() || connectStatus != WKConnectStatus.success) {
+            WKLoggerUtils.getInstance().i(TAG, "[probe] 连接不可用(空或非success), 直接后台重连");
             scheduleReconnectionOnBackground(0);
             return;
         }
 
+        // 取消上一次在途探活的超时任务 + 钩子, 避免快速切前后台时旧 timeout 误触发重连
+        Runnable prevTimeout = probeTimeoutRunnable;
+        if (prevTimeout != null) {
+            reconnectionHandler.removeCallbacks(prevTimeout);
+        }
+        probePongCallback = null;
+
         final AtomicBoolean resolved = new AtomicBoolean(false);
 
         // 超时任务: 到点还没收到 pong → 判定 half-open
-        final Runnable timeoutRunnable = () -> {
-            if (resolved.compareAndSet(false, true)) {
-                probePongCallback = null; // 清钩子, 避免迟到 pong 误触发
-                WKLoggerUtils.getInstance().e(TAG, "[probe] " + timeoutMs + "ms 内无 pong, 判定 half-open, 后台重连");
-                scheduleReconnectionOnBackground(0);
+        final Runnable timeoutRunnable = new Runnable() {
+            @Override
+            public void run() {
+                if (resolved.compareAndSet(false, true)) {
+                    probePongCallback = null; // 清钩子, 避免迟到 pong 误触发
+                    probeTimeoutRunnable = null;
+                    WKLoggerUtils.getInstance().e(TAG, "[probe] " + timeoutMs + "ms 内无 pong, 判定 half-open, 后台重连");
+                    scheduleReconnectionOnBackground(0);
+                }
             }
         };
 
@@ -412,10 +426,12 @@ public class WKConnection {
         probePongCallback = () -> {
             if (resolved.compareAndSet(false, true)) {
                 reconnectionHandler.removeCallbacks(timeoutRunnable);
+                probeTimeoutRunnable = null;
                 WKLoggerUtils.getInstance().i(TAG, "[probe] 收到 pong, 连接存活");
             }
         };
 
+        probeTimeoutRunnable = timeoutRunnable;
         WKLoggerUtils.getInstance().i(TAG, "[probe] 发 ping 探活, 等 pong " + timeoutMs + "ms");
         reconnectionHandler.postDelayed(timeoutRunnable, timeoutMs);
         sendMessage(new WKPingMsg());

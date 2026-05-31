@@ -74,6 +74,9 @@ public class ConnectionManager extends BaseManager {
                 || TextUtils.isEmpty(WKIMApplication.getInstance().getUid())) {
             return;
         }
+        if (!WKIMApplication.getInstance().isCanConnect) {
+            return;
+        }
         WKConnection.getInstance().probeConnection(timeoutMs);
     }
 
